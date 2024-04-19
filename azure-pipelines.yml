@@ -1,0 +1,68 @@
+trigger:
+- main
+
+resources:
+- repo: self
+
+variables:
+  tag: '$(Build.BuildId)'
+
+stages:
+- stage: BuildAndVerify
+  displayName: Build and run Unit Tests
+  jobs:  
+  - job: BuildAndTest
+    displayName: Build and run Unit Tests
+    pool:
+      vmImage: 'ubuntu-latest'
+    steps:
+    - task: DotNetCoreCLI@2
+      inputs:
+        command: 'build'
+    - task: DotNetCoreCLI@2
+      inputs:
+        command: 'test'
+
+- stage: DockerBuild
+  displayName: Build image
+  dependsOn: BuildAndVerify
+  jobs:  
+  - job: Build
+    displayName: Build
+    pool:
+      vmImage: 'ubuntu-latest'
+    steps:
+    - task: Docker@2
+      inputs:
+        containerRegistry: 'DockerHub'
+        repository: 'digvijayava/congestiontaxapi'
+        command: 'buildAndPush'
+        Dockerfile: '**/Dockerfile'
+        tags: |
+          $(tag)
+    
+- stage: Provision
+  displayName: 'Terraforming on Azure...'
+  dependsOn: DockerBuild
+  jobs:
+  - job: Provision
+    displayName: 'Provisioning Container Instance'
+    pool:
+      vmImage: 'ubuntu-latest'
+    variables: 
+    - group: TerraformEnvironmentVariables
+    steps:
+    - script: |
+        set -e
+
+        terraform init -input=false
+        terraform apply -input=false -auto-approve
+      name: 'RunTerraform'
+      displayName: 'Run Terraform'
+      env:
+        ARM_CLIENT_ID: $(ARM_CLIENT_ID)
+        ARM_CLIENT_SECRET: $(ARM_CLIENT_SECRET)
+        ARM_TENANT_ID: $(ARM_TENANT_ID)
+        ARM_SUBSCRIPTION_ID: $(ARM_SUBSCRIPTION_ID)
+        TF_VAR_imagebuild: $(tag)
+        
